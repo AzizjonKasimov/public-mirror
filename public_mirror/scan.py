@@ -1,15 +1,17 @@
 """Look for things that must not be published.
 
 Text files are searched for the repo's deny terms and for built-in detectors: secrets,
-phone numbers, email addresses, and Korean registration numbers. Word, Excel, and PowerPoint
-files are searched through their text, and PDFs too when `pypdf` is installed. Photos are
-checked for a stored GPS location. Everything else cannot be read and is listed as unscanned.
+phone numbers, email addresses, Korean registration numbers, and public IP addresses. Word,
+Excel, and PowerPoint files are searched through their text, and PDFs too when `pypdf` is
+installed. Photos are checked for a stored GPS location. Everything else cannot be read and is
+listed as unscanned.
 """
 
 from __future__ import annotations
 
 import html
 import io
+import ipaddress
 import re
 import zipfile
 from dataclasses import dataclass
@@ -36,7 +38,20 @@ DETECTORS: dict[str, tuple[re.Pattern[str], str]] = {
     ), "a phone number"),
     "email": (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b"),
               "an email address"),
+    # Finds candidates only: scan_text keeps the ones is_public_ip accepts.
+    "ip-address": (re.compile(
+        # IPv4, but not a version glued to a name, as in jdk-17.0.1.2 or Chrome/120.0.0.0
+        r"(?<!\w)(?<!\d\.)(?<![A-Za-z][-/])(?:\d{1,3}\.){3}\d{1,3}(?!\w|\.\d)"
+        # IPv4 with dashes in a host name: 203-0-113-7.sslip.io, ec2-203-0-113-7.compute-1.amazonaws.com
+        r"|(?<!\d)\d{1,3}(?:-\d{1,3}){3}(?=\.[A-Za-z0-9-]+\.[A-Za-z])"
+        # IPv6: 2001:db8::7
+        r"|(?<![\w:])(?:[0-9A-Fa-f]{1,4}:|:)(?:[0-9A-Fa-f]{0,4}:){1,6}[0-9A-Fa-f]{0,4}(?![\w:]|\.\d)"
+    ), "a public IP address"),
 }
+
+# Every public IPv6 address is in this range. Python calls some other addresses global too, and
+# those are shapes that code is full of, such as the 1::2 in a slice.
+PUBLIC_IPV6 = ipaddress.ip_network("2000::/3")
 
 # Matches that are never private: example and no-reply addresses, and git SSH remotes.
 DEFAULT_ALLOW = [re.compile(p, re.IGNORECASE) for p in (r"@example\.(?:com|org|net)$", r"noreply", r"^git@")]
@@ -87,6 +102,21 @@ def _word_char(char: str) -> bool:
     return char.isascii() and char.isalnum()
 
 
+def is_public_ip(value: str) -> bool:
+    """True for an address of a host on the internet, false for private, local, and example ones.
+
+    Also false for whatever the ip-address pattern catches that is no address at all, such as a
+    version number with a part over 255 or a time.
+    """
+    try:
+        address = ipaddress.ip_address(value.replace("-", "."))
+    except ValueError:
+        return False
+    if address.version == 6 and address not in PUBLIC_IPV6:
+        return False
+    return address.is_global and not address.is_multicast
+
+
 def is_binary(path: str, data: bytes) -> bool:
     # Documents and photos go to their own readers even when they hold no NUL byte (git's own test).
     suffix = PurePosixPath(path).suffix.lower()
@@ -119,6 +149,8 @@ class Scanner:
         for rule, (regex, label) in self.detectors.items():
             for match in regex.finditer(text):
                 value = match.group(0)
+                if rule == "ip-address" and not is_public_ip(value):
+                    continue
                 if not any(allowed.search(value) for allowed in self.allow):
                     add(rule, f"looks like {label}: {mask(value)}", match.start())
         return [Finding(ERROR, path, line, rule, what + (f" ({count} times)" if count > 1 else ""))

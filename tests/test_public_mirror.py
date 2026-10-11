@@ -117,6 +117,42 @@ def test_scan_blocks_deny_terms_contacts_and_keys(project, capsys):
     assert "1234 5678" not in out  # matches are masked in the report
 
 
+def test_scan_finds_public_ip_addresses(project, capsys):
+    project.config('[paths]\npublic = ["*"]\n')
+    project.write("server.md", "\n".join([
+        "Connect with ssh deploy@8.8.4.4 to reach the gateway.",
+        "It also answers at https://api.1-1-1-1.sslip.io/v1/generate.",
+        "Over IPv6: [2001:4860:4860::8888]:443",
+        "Mapped, as in a log: ::ffff:9.9.9.9",
+        "",
+    ]))
+    project.write("fine.md", "\n".join([
+        "Local: 127.0.0.1, 192.168.0.10, 10.0.0.5, 172.16.4.2, 100.64.0.1, 224.0.0.1, fe80::1, ::1, fd00::7",
+        "Examples: 203.0.113.7, 198.51.100.20, 192.0.2.1, 2001:db8::5, 203-0-113-7.sslip.io",
+        "Versions: v1.2.3.4, 1.2.3.4.5, Python 3.11.4, jdk-17.0.19.10-hotspot, Chrome/120.0.0.0, 999.1.1.1",
+        "Code and times: std::vector, a[1::2], 12:30:45, 00:1a:2b:3c:4d:5e, 2026-10-11",
+        "File names: backup-2026-11-18-12-30.log, 11-18-12-30.md",
+        "",
+    ]))
+    project.commit()
+
+    assert project.run("check") == 1
+    out = capsys.readouterr().out
+    for line in (1, 2, 3, 4):
+        assert f"server.md:{line}  [ip-address]" in out
+    assert "fine.md" not in out
+    assert "8.8.4.4" not in out  # masked in the report
+
+    # An address that is meant to be public can be allowed, and the detector switched off.
+    project.config('[paths]\npublic = ["*"]\n\n[scan]\nallow = [\'^8\\.8\\.4\\.4$\']\n')
+    assert project.run("check") == 1
+    out = capsys.readouterr().out
+    assert "server.md:1  [ip-address]" not in out
+    assert "server.md:2  [ip-address]" in out
+    project.config('[paths]\npublic = ["*"]\n\n[scan]\nskip_detectors = ["ip-address"]\n')
+    assert project.run("check") == 0
+
+
 def test_replace_rewrites_terms_and_keeps_them_out(project, capsys):
     project.config("\n".join([
         '[paths]\npublic = ["*"]\n',

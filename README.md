@@ -111,7 +111,7 @@ prune_private_links = true  # in Markdown, drop lines that link to unpublished f
 deny = ["Project Falcon", "+82 10 1234 5678"]  # must never be published; case and spacing are ignored
 deny_files = ["~/.config/public-mirror/project-deny.txt"]  # more terms, one per line, kept out of git
 allow = ['you@example\.dev']    # regular expressions for detector matches that may be published
-skip_detectors = []             # any of: private-key, token, id-number, phone, email
+skip_detectors = []             # any of: private-key, token, id-number, phone, email, ip-address
 max_file_mb = 50
 ```
 
@@ -204,10 +204,13 @@ The scan reads every file of the public copy, after the private lines are remove
   - API keys and tokens (AWS, GitHub, Anthropic, OpenAI, Google, Slack, Telegram);
   - Korean resident and alien registration numbers;
   - phone numbers;
-  - email addresses.
+  - email addresses;
+  - public IP addresses, such as a server's: IPv4, IPv6, and IPv4 written with dashes in a host
+    name, the way sslip.io and AWS host names write it.
 
-  Example, no-reply, and `git@` addresses are always allowed. Allow your own public address with
-  `allow`.
+  Example, no-reply, and `git@` email addresses are always allowed, and so are private, local, and
+  example IP addresses (`192.168.0.10`, `127.0.0.1`, `203.0.113.7`). Allow your own public email
+  address, or a version number that looks like an IP address, with `allow`.
 - **Documents:** Word, Excel, and PowerPoint files are scanned through their text. PDFs are too,
   when pypdf is available.
 - **Photos:** JPEG and PNG files that store a GPS location are blocked.
